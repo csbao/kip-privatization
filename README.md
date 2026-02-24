@@ -3,13 +3,21 @@ This is the repository for the project Keep it Private: Unsupervised Privatizati
 
 ## How to Install
 
-- The `requirements` will need to be installed. 
-```
-$ scripts/setup.sh
+### 1. Download the model weights
+
+```bash
+pip install huggingface_hub
+huggingface-cli download csbao/kip-dipper-large --local-dir models/dipper-large
+huggingface-cli download csbao/kip-dipper-large dipper_cd_v130.bin --local-dir models
 ```
 
-This will create a conda environment named `kip`. You will need to download the checkpoints
-into the `models` directory.  The script will prompt you to run the correct commands.
+### 2. Set up the environment
+
+```bash
+./scripts/setup.sh
+```
+
+This will create a conda environment named `kip` and install all dependencies.
 
 
 ## Keep It Private Overview
@@ -31,13 +39,13 @@ $ python src/generate.py --input_data_path ${INPUT_DATA_PATH} \
 ```
 ### Example
 
-```
+```bash
 python src/generate.py --input_data_path {JSONFILE} \
       --output_path {OUTPUT_FILE} \
       --model_path models \
       --model_name_to_use dipper-large \
-      --model_start_file models/dipper_v130.bin \
-      --token_max_length 256 \
+      --model_start_file models/dipper_cd_v130.bin \
+      --token_max_length 256
 ```
 
 ## Parameters

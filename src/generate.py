@@ -260,7 +260,7 @@ def privatize(query_text, output_path):
     f = open(os.path.join(output_path), 'w', encoding='utf-8') # to reset it
     for queries in tqdm(query_text):
         generated_sents = []
-        input_text = [prefix + str(t).replace('\n', ' ') for t in queries['fullText']]
+        input_text = [str(t).replace('\n', ' ') for t in queries['fullText']]
         P = FLAGS.num_generations if FLAGS.rerank else 1
 
         params = {"max_length": 256, "do_sample": False, "num_beams": int(FLAGS.decoding_param), "diversity_penalty": float(FLAGS.beam_diversity_penalty), "beam_size": 4, "num_return_sequences": P}

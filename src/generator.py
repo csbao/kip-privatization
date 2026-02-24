@@ -2,7 +2,7 @@ from transformers import GPT2LMHeadModel, GPT2TokenizerFast, BartTokenizerFast
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 from transformers import T5Tokenizer, T5ForConditionalGeneration
 import utils_sampling
-import torch, tqdm, time, os
+import torch, tqdm, time, os, re
 import numpy as np
 from .helper_functions import orig_docs2sents
 #torch.set_printoptions(threshold=10000)
@@ -99,7 +99,7 @@ class Generator:
 
 
 
-    def generate(self, bodies, max_batch_size=8, beam_size=1, ckpt_runs=1, num_runs=1, progress=False, sort_score=False, keep_unique=False, **kwargs):
+    def generate(self, bodies, max_batch_size=8, beam_size=1, ckpt_runs=1, num_runs=1, progress=False, sort_score=False, keep_unique=False, sent_batch_size=8, **kwargs):
         assert not (beam_size > 1 and ckpt_runs > 1), "Cannot ask for beam search and ckpt generation at the same time"
 
         N_start = len(bodies)
@@ -115,7 +115,7 @@ class Generator:
             batch_bodies = bodies[i:min(N, i+max_batch_size)]
             with torch.no_grad():
                     batch_outputs = []
-                    sents_per_doc, original_sentences = docs2sents(batch_bodies, 400,  flatten=True)
+                    sents_per_doc, original_sentences = orig_docs2sents(batch_bodies, 400,  flatten=True)
                     batch_outputs_intermediate = []
                     if ("dipper" in self.model_card):
                         lex_diversity = 20
@@ -123,8 +123,8 @@ class Generator:
                         prompt = f"lexical = {lex_diversity}, order = {order_diversity}"
                     else:
                         prompt = "Paraphrase this:"
-                    for j in range(0, len(original_sentences), k):
-                        chunk = list(map(lambda x: prompt + "  <sent>" + x + "</sent> ", original_sentences[j:j+k]))
+                    for j in range(0, len(original_sentences), sent_batch_size):
+                        chunk = list(map(lambda x: prompt + "  <sent>" + x + "</sent> ", original_sentences[j:j+sent_batch_size]))
                         tmp = self.generate_beam_batch(chunk, beam_size=beam_size, max_output_length=300, sample=False,num_runs=num_runs, **kwargs)
                         batch_outputs_intermediate.append(tmp)
                     if num_runs > 1:
