@@ -2,14 +2,32 @@ from transformers import GPT2LMHeadModel, GPT2TokenizerFast, BartTokenizerFast
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 from transformers import T5Tokenizer, T5ForConditionalGeneration
 import utils_sampling
-import torch, tqdm, time, os
+import torch, tqdm, time, os, re
 import numpy as np
-from .helper_functions import orig_docs2sents
+from helper_functions import orig_docs2sents
 #torch.set_printoptions(threshold=10000)
 torch.set_printoptions(profile="full")
 
 def pad(data, padval=0):
     return torch.nn.utils.rnn.pad_sequence(data, batch_first=True, padding_value=padval)
+
+def clean_text(text):
+    cleaned_text = re.sub(r'^[\s.,:;!-]+', '', text)  # Remove leading spaces and punctuations
+    cleaned_text = re.sub(r'\s+', ' ', cleaned_text)  # Remove extra spaces
+    return cleaned_text.strip()
+
+def clean_model_output(text):
+    """Remove dipper prompt artifacts from model output."""
+    cleaned = text
+    # Remove dipper-style prompts (with various spacing/typos)
+    cleaned = re.sub(r'lexic?\s*al\s*=\s*\d+\s*,?\s*[Oo]rder\s*=\s*\d+\s*\.?\s*', '', cleaned, flags=re.IGNORECASE)
+    # Remove "And then :" artifacts
+    cleaned = re.sub(r'[Aa]nd\s+then\s*:?\s*', '', cleaned)
+    # Remove surrounding quotes
+    cleaned = re.sub(r'^["\']|["\']$', '', cleaned.strip())
+    # Remove extra spaces
+    cleaned = re.sub(r'\s+', ' ', cleaned)
+    return cleaned.strip()
 
 class Generator:
     def __init__(self, model_card, max_input_length=300, seq2seq=False, max_output_length=25, device='cuda'):
@@ -69,12 +87,7 @@ class Generator:
 
 
 
-    def generate_beam_batch(self, bodies, beam_size=3, max_output_length=100,  num_runs=1, **kwargs):
-        def clean_text(text):
-            cleaned_text = re.sub(r'^[\s.,:;!-]+', '', text)  # Remove leading spaces and punctuations
-            cleaned_text = re.sub(r'\s+', ' ', cleaned_text)  # Remove extra spaces
-            return cleaned_text.strip()
-
+    def generate_beam_batch(self, bodies, beam_size=3, max_output_length=100,  num_runs=1, lex_diversity=20, order_diversity=20, **kwargs):
         model_inputs, attention_mask = self.preprocess_input(bodies)
 
         outputs = self.model.generate(model_inputs, **kwargs)
@@ -99,7 +112,7 @@ class Generator:
 
 
 
-    def generate(self, bodies, max_batch_size=8, beam_size=1, ckpt_runs=1, num_runs=1, progress=False, sort_score=False, keep_unique=False, **kwargs):
+    def generate(self, bodies, max_batch_size=8, beam_size=1, ckpt_runs=1, num_runs=1, progress=False, sort_score=False, keep_unique=False, sent_batch_size=8, generate_by_sent=False, sample=False, sent_interval=4, lex_diversity=20, order_diversity=20, **kwargs):
         assert not (beam_size > 1 and ckpt_runs > 1), "Cannot ask for beam search and ckpt generation at the same time"
 
         N_start = len(bodies)
@@ -115,24 +128,22 @@ class Generator:
             batch_bodies = bodies[i:min(N, i+max_batch_size)]
             with torch.no_grad():
                     batch_outputs = []
-                    sents_per_doc, original_sentences = docs2sents(batch_bodies, 400,  flatten=True)
+                    sents_per_doc, original_sentences = orig_docs2sents(batch_bodies, 400,  flatten=True)
                     batch_outputs_intermediate = []
                     if ("dipper" in self.model_card):
-                        lex_diversity = 20
-                        order_diversity = 20
                         prompt = f"lexical = {lex_diversity}, order = {order_diversity}"
                     else:
                         prompt = "Paraphrase this:"
-                    for j in range(0, len(original_sentences), k):
-                        chunk = list(map(lambda x: prompt + "  <sent>" + x + "</sent> ", original_sentences[j:j+k]))
-                        tmp = self.generate_beam_batch(chunk, beam_size=beam_size, max_output_length=300, sample=False,num_runs=num_runs, **kwargs)
+                    for j in range(0, len(original_sentences), sent_batch_size):
+                        chunk = list(map(lambda x: prompt + "  <sent>" + x + "</sent> ", original_sentences[j:j+sent_batch_size]))
+                        tmp = self.generate_beam_batch(chunk, beam_size=beam_size, max_output_length=300, num_runs=num_runs, **kwargs)
                         batch_outputs_intermediate.append(tmp)
                     if num_runs > 1:
                         transformed = [list(item) for item in zip(*[sublist[0] for sublist in batch_outputs_intermediate])]
                         for batch in transformed:
-                            batch_outputs.append({'output_text': clean_text(' '.join(batch))})
+                            batch_outputs.append({'output_text': clean_text(' '.join([clean_model_output(s) for s in batch]))})
                     else:
-                        batch_outputs = [clean_text(" ".join(map(lambda y: y["output_text"], x))) for x in batch_outputs_intermediate ]
+                        batch_outputs = [clean_text(" ".join([clean_model_output(y["output_text"]) for y in x])) for x in batch_outputs_intermediate]
             outputs += batch_outputs
 
         return outputs
