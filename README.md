@@ -25,6 +25,12 @@ Keep it Private performs authorship transfer by performing authorship transfer u
 seq2seq model that was adversarially fine-tuned via reinforcement learning using
 a set of rewards (Privacy, Sense, and Soundness metrics)
 
+## Input Format
+The input file should be a JSONL file, one JSON object per line, with a `fullText` key:
+```
+{"fullText": "hi! this is the first document to privatize."}
+{"fullText": "This is another text input. It can have multiple sentences..."}
+```
 
 ## Command template
 
