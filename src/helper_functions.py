@@ -110,7 +110,8 @@ def orig_docs2sents(documents, truncation_length, flatten=False):
     if truncation_length > 0:
         split_sentences_truncated = [[truncate_sentence(sent, truncation_length) for sent in doc] for doc in split_sentences]
         num_truncated = sum([sum([len(sent) != len(sent_trunc) for sent, sent_trunc in zip(doc, doc_trunc)]) for doc, doc_trunc in zip(split_sentences, split_sentences_truncated)])
-        proportion_truncated = num_truncated/len([x for y in split_sentences_truncated for x in y]) * 100
+        total_sentences = len([x for y in split_sentences_truncated for x in y])
+        proportion_truncated = (num_truncated / total_sentences * 100) if total_sentences > 0 else 0
         logging.info(f'{round(proportion_truncated,0)}% of sentences truncated at {truncation_length} characters')
     
     if flatten:

@@ -35,6 +35,8 @@ flags.DEFINE_integer("num_generations", 4, "Number of texts to generate")
 flags.DEFINE_string("decoding_param", '4', "beam width")
 flags.DEFINE_float("beam_diversity_penalty", 10, "diversity penalty")
 flags.DEFINE_integer("num_beam_groups", 1, "num beam groups")
+flags.DEFINE_enum("lex_diversity", "20", ["0", "20", "40", "60"], "Lexical diversity for dipper model")
+flags.DEFINE_enum("order_diversity", "20", ["0", "20", "40", "60"], "Order diversity for dipper model")
 
 # Inherited from reranking code
 flags.DEFINE_integer("cola_sbert_batch_size", 64, "Number of documents to batch for COLA and SBERT models")
@@ -69,7 +71,7 @@ def load_model(device, model_prefix):
     model = Generator(os.path.join(FLAGS.model_path, model_prefix), seq2seq=("gpt" not in model_prefix), max_input_length = FLAGS.token_max_length, max_output_length=FLAGS.token_max_length+20, device=device)
     if FLAGS.model_start_file is not None and FLAGS.model_start_file != "":
         model.reload(FLAGS.model_start_file)
-    model.eval()
+    model.model.eval()
     return model
 
 
@@ -205,11 +207,12 @@ def sbert_cosim_v2(original_documents, privatized_documents, num_generations, mo
         model_path (str): path to models.
         batch_size (int): batch size for model.
     """
-    model = SentenceTransformer(os.path.join(model_path, 'all-mpnet-base-v2'), device="cuda")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = SentenceTransformer(os.path.join(model_path, 'all-mpnet-base-v2'), device=device)
     emb_orig = torch.tensor(model.encode(original_documents, batch_size=batch_size))
-    emb_orig = emb_orig.to(device='cuda')
+    emb_orig = emb_orig.to(device=device)
     emb_priv = torch.tensor(model.encode(privatized_documents, batch_size=batch_size))
-    emb_priv = emb_priv.to(device='cuda')
+    emb_priv = emb_priv.to(device=device)
     scores = compute_cosdist_v2(emb_orig, emb_priv)
     scores = (1 - np.array(scores)).tolist()
     return scores
@@ -249,22 +252,28 @@ def privatize(query_text, output_path):
     logging.info("Loading model")
     device = get_device()
     model = load_model(device, model_prefix=FLAGS.model_name_to_use)
-    tokenizer = load_tokenizer(model_prefix=FLAGS.model_name_to_use)
-    
-    start_i = tokenizer.bos_token_id
-    input_texts = []
-    generated_sents_overall = []
+
     dirname = os.path.dirname(output_path)
     if dirname:
         os.makedirs(dirname, exist_ok=True)
-    f = open(os.path.join(output_path), 'w', encoding='utf-8') # to reset it
+    # Clear output file
+    open(output_path, 'w', encoding='utf-8').close()
     for queries in tqdm(query_text):
         generated_sents = []
         input_text = [str(t).replace('\n', ' ') for t in queries['fullText']]
         P = FLAGS.num_generations if FLAGS.rerank else 1
 
-        params = {"max_length": 256, "do_sample": False, "num_beams": int(FLAGS.decoding_param), "diversity_penalty": float(FLAGS.beam_diversity_penalty), "beam_size": 4, "num_return_sequences": P}
-        model_outputs = model.generate(input_text, num_runs=P,  generate_by_sent=True, sample=True, sent_interval=FLAGS.sent_interval, **params)
+        params = {"max_length": FLAGS.token_max_length, "do_sample": False, "num_beams": int(FLAGS.decoding_param), "num_return_sequences": P}
+        if FLAGS.num_beam_groups > 1:
+            params["diversity_penalty"] = float(FLAGS.beam_diversity_penalty)
+            params["num_beam_groups"] = FLAGS.num_beam_groups
+        model_outputs = model.generate(input_text, num_runs=P, generate_by_sent=True, sample=True, sent_interval=FLAGS.sent_interval, lex_diversity=int(FLAGS.lex_diversity), order_diversity=int(FLAGS.order_diversity), **params)
+
+        # Skip empty outputs
+        if not model_outputs:
+            logging.warning(f"No output generated for input, skipping")
+            continue
+
         model_output = model_outputs[0]
         if FLAGS.rerank:
             logging.info("Reranking samples")
@@ -278,13 +287,14 @@ def privatize(query_text, output_path):
             best_sent_idx = rerank(reranking_metrics)[-1]
             best_sample = model_outputs[int(best_sent_idx)]
             model_output = best_sample
-            generated_sents.append(model_output)
-            queries_dict = queries.to_dict(orient="records")
-            for sent, data in zip(generated_sents, queries_dict):
-                with open(os.path.join(output_path), 'a', encoding='utf-8') as f:
-                    doc = data.copy()
-                    doc["fullText"] = sent.replace("Paraphrase:", "").strip()
-                    f.write(json.dumps(doc) + "\n")
+
+        # Write output (regardless of rerank flag)
+        queries_dict = queries.to_dict(orient="records")
+        for data in queries_dict:
+            with open(os.path.join(output_path), 'a', encoding='utf-8') as f:
+                doc = data.copy()
+                doc["fullText"] = model_output
+                f.write(json.dumps(doc) + "\n")
             
 
     return None 
