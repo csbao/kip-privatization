@@ -55,3 +55,5 @@ python src/generate.py --input_data_path {JSONFILE} \
 4. `model_name_to_use`: path to pre-trained base model
 5. `token_max_length`: max cutoff length of output
 6. `random_seed`: initialize all random seed to this value
+7. `lex_diversity`: lexical diversity level (20, 40, or 60)
+8. `order_diversity`: order diversity level (20, 40, or 60)
